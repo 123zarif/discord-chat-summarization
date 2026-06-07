@@ -1,5 +1,5 @@
-import { Client, Events, GatewayIntentBits, SlashCommandBuilder, MessageFlags } from 'discord.js';
-import OpenAI from "openai";
+import { Client, Events, GatewayIntentBits, SlashCommandBuilder, MessageFlags, EmbedBuilder } from 'discord.js';
+import { GoogleGenAI } from '@google/genai';
 import 'dotenv/config';
 
 const client = new Client({
@@ -10,13 +10,14 @@ const client = new Client({
     ],
 });
 
-const client_ai = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
-    baseURL: "https://api.groq.com/openai/v1",
-});
+const ai = new GoogleGenAI({});
 
 const cooldowns = new Map();
 const COOLDOWN_DURATION = 2 * 60 * 1000;
+
+const usageTracker = new Map();
+const MAX_USES_PER_DAY = 4;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 
 function parseTimeToMilliseconds(timeStr) {
@@ -82,9 +83,37 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
         }
 
-        cooldowns.set(userId, currentTime);
+        if (!usageTracker.has(userId)) {
+            usageTracker.set(userId, []);
+        }
 
-        setTimeout(() => cooldowns.delete(userId), COOLDOWN_DURATION);
+        const userRequests = usageTracker.get(userId).filter(timestamp => currentTime - timestamp < ONE_DAY_MS);
+        usageTracker.set(userId, userRequests);
+
+        if (userRequests.length >= MAX_USES_PER_DAY) {
+            const oldestRequest = userRequests[0];
+            const dynamicResetTime = oldestRequest + ONE_DAY_MS;
+            const timeLeftMs = dynamicResetTime - currentTime;
+
+            const hoursLeft = Math.floor(timeLeftMs / (60 * 60 * 1000));
+            const minutesLeft = Math.ceil((timeLeftMs % (60 * 60 * 1000)) / (60 * 1000));
+            const formatTimeString = hoursLeft > 0 ? `${hoursLeft}h ${minutesLeft}m` : `${minutesLeft}m`;
+
+            return await interaction.reply({
+                content: `You have reached your limit of **${MAX_USES_PER_DAY}** summaries per day. Your next slot opens up in **${formatTimeString}**.`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        cooldowns.set(userId, currentTime);
+        userRequests.push(currentTime);
+        usageTracker.set(userId, userRequests);
+
+        setTimeout(() => {
+            if (cooldowns.get(userId) === currentTime) {
+                cooldowns.delete(userId);
+            }
+        }, COOLDOWN_DURATION);
 
 
 
@@ -138,18 +167,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                         if (referencedMsg) {
                             const flatContent = referencedMsg.content.replace(/\n/g, " ");
-
                             const quotedContent = flatContent.length > 40
                                 ? flatContent.substring(0, 40) + "..."
                                 : flatContent;
 
                             replyTag = ` (Replying to ${referencedMsg.author.username}: "${quotedContent}")`;
                         } else {
-                            replyTag = ` (Replying to an older message outside this timeframe)`;
+                            replyTag = ` (Replying to an older message)`;
                         }
                     }
 
-                    return `[${msg.author.username}]${replyTag}: ${msg.content}`;
+                    return `[${msg.author.username}]${replyTag} [Link: ${msg.url}]: ${msg.content}`;
                 })
                 .reverse()
                 .join('\n');
@@ -157,35 +185,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (!chatLogString) {
                 return await interaction.editReply(`No human text entries found within the last ${timeInput}.`);
             }
-            const completion = await client_ai.chat.completions.create({
-                messages: [
-                    {
-                        role: "system",
-                        content: `
-You are a helpful Discord bot. Review the chat transcript and provide a clear, comprehensive summary that reads naturally and skips conversational filler.
 
-GUIDELINES:
-- **Coverage**: You must mention every distinct topic discussed in the log.
-- **People**: Explicitly attribute actions, questions, and decisions to the specific users who said them.
-- **Formatting**: Use clean spacing, bold names, and clear section dividers instead of a giant wall of bullet points. Make it incredibly easy to read at a single glance.
-- **ZERO FILLER**: Do NOT use introductory sentences (e.g., "In this chat...", "Here is the summary"). Do NOT write concluding paragraphs (e.g., "In summary...", "Overall..."). Start immediately with the facts.
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: `
+          You are an observant, casual chat assistant for a Discord server. 
+          Analyze the chat logs below and write an easy-to-read, natural summary.
+          
+          CRITICAL SYSTEM DIRECTIVES:
+          1. ZERO ROBOTIC FILLER: Do NOT begin with statements like "In this chat transcript..." or "The users discussed...". Dive straight into the information.
+          2. SYNTHESIZE: If users repeat the same topic or joke, consolidate them into a single mention.
+          3. CAPTURE HUMOR: Organically include sarcasm, jokes, or banter so the server's energy is preserved.
+          4. INLINE JUMP LINKS: I have provided a [Link: URL] for every message. Whenever you mention a specific user's action, joke, or quote, you MUST hyperlink your text to their message using standard Markdown. 
+             - Example of what to do: "[UserA was confused about the bombing joke](https://discord.com/channels/...)"
+             - Never paste raw URLs. Always hide them behind readable text.
+          5. LAYOUT: Write in 2 or 3 short, naturally flowing narrative paragraphs. No generic, boring lists.
 
-Ensure the entire output stays under 1500 characters to prevent Discord truncation.
-`                    },
-                    {
-                        role: "user",
-                        content: `--- TRANSCRIPT TIMEFRAME: ${timeInput} ---\n${chatLogString}`
-                    }
-                ],
-                // model: "meta-llama/llama-4-scout-17b-16e-instruct",
-                model: "allam-2-7b",
-                temperature: 0.3,
+          Keep the total character count concise so it fits easily into a Discord message.
+
+          --- CHAT LOG HISTORY ---
+          ${chatLogString}
+          --- END OF LOGS ---
+        `,
             });
 
-            const aiSummaryResponse = completion.choices[0]?.message?.content || "Could not resolve summary.";
 
-            await interaction.editReply(`**AI Summary of the last ${timeInput} (${allFetchedMessages.length} messages parsed):**\n\n${aiSummaryResponse}`);
+            const aiSummaryResponse = response.text || "Could not resolve summary.";
 
+            const summaryEmbed = new EmbedBuilder()
+                .setColor('#2b2d31')
+                .setTitle(`AI Summary of the last ${timeInput} (${allFetchedMessages.length} msgs)`)
+                .setDescription(aiSummaryResponse.substring(0, 4096))
+                .setFooter({ text: 'Thats all my sweet nigger!' });
+
+            await interaction.editReply({
+                content: '',
+                embeds: [summaryEmbed]
+            });
         } catch (error) {
             console.error('Execution failure inside command:', error);
             await interaction.editReply('Something went sideways while compiling the summary.');
