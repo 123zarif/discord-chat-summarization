@@ -1,9 +1,18 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, ApplicationIntegrationType, InteractionContextType } from 'discord.js';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('random')
         .setDescription('Generates a random number within a specific range')
+        .setIntegrationTypes(
+            ApplicationIntegrationType.GuildInstall,
+            ApplicationIntegrationType.UserInstall
+        )
+        .setContexts(
+            InteractionContextType.Guild,
+            InteractionContextType.BotDM,
+            InteractionContextType.PrivateChannel
+        )
         .addIntegerOption(option =>
             option.setName('from')
                 .setDescription('The minimum number')
