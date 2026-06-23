@@ -23,7 +23,7 @@ export async function startArgentinaTracker(client) {
     console.log('🇦🇷 Starting Argentina Goal Tracker...');
 
     checkScore(client, API_KEY, CHANNEL_ID);
-    setInterval(() => checkScore(client, API_KEY, CHANNEL_ID), 15000);
+    setInterval(() => checkScore(client, API_KEY, CHANNEL_ID), 10000);
 }
 
 async function checkScore(client, apiKey, channelId) {
