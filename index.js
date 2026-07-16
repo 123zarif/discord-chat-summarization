@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client, GatewayIntentBits, Collection } from 'discord.js';
+import express from 'express';
 import 'dotenv/config';
 
 // ES Module dirname setup
@@ -15,6 +16,52 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
     ],
 });
+
+const app = express();
+app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const TARGET_CHANNEL_ID = process.env.INSTAGRAM_TARGET_CHANNEL_ID;
+
+app.get('/webhook', (req, res) => {
+    if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === VERIFY_TOKEN) {
+        console.log('Meta Webhook successfully verified and linked!');
+        return res.status(200).send(req.query['hub.challenge']);
+    }
+    res.sendStatus(403);
+});
+
+app.post('/webhook', async (req, res) => {
+    const body = req.body;
+
+    if (body.object === 'instagram') {
+        try {
+            for (let entry of body.entry) {
+                const messagingEvent = entry.messaging?.[0];
+
+                if (messagingEvent && messagingEvent.message) {
+                    const messageText = messagingEvent.message.text || '';
+
+                    // Route if message matches an Instagram Reel URL
+                    if (messageText.includes('instagram.com/reel/')) {
+                        console.log(`🎯 Reel caught in DMs: ${messageText}`);
+
+                        // Direct access to your bot's cache since we are inside index.js
+                    }
+                }
+            }
+            return res.status(200).send('EVENT_RECEIVED');
+        } catch (error) {
+            console.error('❌ Webhook pipeline processing error:', error.message);
+            return res.sendStatus(500);
+        }
+    }
+    res.sendStatus(404);
+});
+
+app.listen(PORT, () => console.log(`🚀 Webhook gateway monitoring inbound data on port ${PORT}`));
+
 
 // Create a Collection to store commands
 client.commands = new Collection();
@@ -50,3 +97,4 @@ for (const file of eventFiles) {
 }
 
 client.login(process.env.DISCORD_TOKEN);
+
