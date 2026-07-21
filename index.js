@@ -36,7 +36,6 @@ app.get('/webhook', (req, res) => {
     res.sendStatus(403);
 });
 
-
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -45,22 +44,45 @@ app.post('/webhook', async (req, res) => {
             for (let entry of body.entry) {
                 const messagingEvent = entry.messaging?.[0];
 
-                if (messagingEvent && messagingEvent.message) {
-                    const messageText = messagingEvent.message.text || '';
+                if (messagingEvent) {
+                    if (messagingEvent.message?.is_echo) {
+                        continue;
+                    }
+
+                    const message = messagingEvent.message;
                     const senderId = messagingEvent.sender?.id || 'Unknown';
 
-                    if (messageText.includes('instagram.com/reel/') || messageText.includes('instagram.com/reels/')) {
-                        console.log(`📥 Reel from ${senderId}: ${messageText}`);
+                    let reelUrl = null;
+
+                    if (message) {
+                        const messageText = message.text || '';
+                        if (messageText.includes('instagram.com/reel/') || messageText.includes('instagram.com/reels/')) {
+                            const match = messageText.match(/https?:\/\/(?:www\.)?instagram\.com\/reels?\/[^\s]+/);
+                            if (match) reelUrl = match[0];
+                        }
+
+                        if (!reelUrl && message.attachments) {
+                            for (let attachment of message.attachments) {
+                                if (attachment.type === 'ig_reel' && attachment.payload?.url) {
+                                    reelUrl = attachment.payload.url;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (reelUrl) {
+                        console.log(`Reel found from ${senderId}: ${reelUrl}`);
 
                         const userMap = {
-                            "17843602760913614": "Zarif_1020",
+                            "17841457408396056": "Zarif_1020",
                         };
 
                         const senderName = userMap[senderId] || `User_${senderId.slice(-4)}`;
 
                         const channel = await client.channels.fetch(TARGET_CHANNEL_ID).catch(() => null);
                         if (!channel || !channel.isTextBased()) {
-                            console.error(`❌ Could not find or access Discord channel with ID: ${TARGET_CHANNEL_ID}`);
+                            console.error(`Could not find or access Discord channel with ID: ${TARGET_CHANNEL_ID}`);
                             continue;
                         }
 
@@ -68,8 +90,8 @@ app.post('/webhook', async (req, res) => {
                         const cookiesPath = path.join(__dirname, 'cookies.txt');
 
                         try {
-                            console.log('⏳ Downloading reel media via yt-dlp...');
-                            await execPromise(`yt-dlp --cookies "${cookiesPath}" -o "${outputFilePath}" "${messageText}"`);
+                            console.log('Downloading reel media via yt-dlp...');
+                            await execPromise(`yt-dlp --cookies "${cookiesPath}" -o "${outputFilePath}" "${reelUrl}"`);
 
                             if (!fs.existsSync(outputFilePath)) {
                                 throw new Error('Download completed but file is missing.');
@@ -79,7 +101,7 @@ app.post('/webhook', async (req, res) => {
                             const fileSizeInMB = stats.size / (1024 * 1024);
 
                             if (fileSizeInMB > 25) {
-                                await channel.send(` **New Instagram Reel from @${senderName} (Too large to upload directly):**\n${messageText}`);
+                                await channel.send(`**New Instagram Reel from @${senderName} (Too large to upload directly):**\n${reelUrl}`);
                                 console.log('Reel file too large for Discord (>25MB), sent link instead.');
                             } else {
                                 const attachment = new AttachmentBuilder(outputFilePath, { name: 'reel.mp4' });
@@ -91,10 +113,8 @@ app.post('/webhook', async (req, res) => {
                             }
                         } catch (downloadError) {
                             console.error('Failed to download or process reel:', downloadError.message);
-                            // Fallback so the link isn't lost if download/upload fails
-                            await channel.send(` **New Instagram Reel from @${senderName} (Download failed, fallback link):**\n${messageText}`);
+                            await channel.send(`**New Instagram Reel from @${senderName} (Download failed, fallback link):**\n${reelUrl}`);
                         } finally {
-                            // Guaranteed cleanup so temporary files never leak or lock up the disk
                             if (fs.existsSync(outputFilePath)) {
                                 try {
                                     fs.unlinkSync(outputFilePath);
@@ -108,7 +128,7 @@ app.post('/webhook', async (req, res) => {
             }
             return res.status(200).send('EVENT_RECEIVED');
         } catch (error) {
-            console.error('❌ Webhook pipeline processing error:', error.message);
+            console.error('Webhook pipeline processing error:', error.message);
             return res.sendStatus(500);
         }
     }
