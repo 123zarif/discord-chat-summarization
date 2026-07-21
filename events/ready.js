@@ -1,5 +1,4 @@
 import { Events } from 'discord.js';
-import { startArgentinaTracker } from '../services/argentinaTracker.js';
 import 'dotenv/config';
 
 export default {
@@ -17,7 +16,5 @@ export default {
         } catch (error) {
             console.error('Error deploying global slash commands:', error);
         }
-
-        startArgentinaTracker(client);
     }
 };
