@@ -47,9 +47,10 @@ app.post('/webhook', async (req, res) => {
 
                 if (messagingEvent && messagingEvent.message) {
                     const messageText = messagingEvent.message.text || '';
+                    const senderId = messagingEvent.sender?.id || 'Unknown';
 
-                    if (messageText.includes('instagram.com/reel/')) {
-                        console.log(`Reel: ${messageText}`);
+                    if (messageText.includes('instagram.com/reel/') || messageText.includes('instagram.com/reels/')) {
+                        console.log(`📥 Reel from ${senderId}: ${messageText}`);
 
                         const userMap = {
                             "17843602760913614": "Zarif_1020",
@@ -58,40 +59,56 @@ app.post('/webhook', async (req, res) => {
                         const senderName = userMap[senderId] || `User_${senderId.slice(-4)}`;
 
                         const channel = await client.channels.fetch(TARGET_CHANNEL_ID).catch(() => null);
-                        if (channel && channel.isTextBased()) {
-                            const outputFilePath = path.join(__dirname, `temp_reel_${Date.now()}.mp4`);
-                            const cookiesPath = path.join(__dirname, 'cookies.txt');
+                        if (!channel || !channel.isTextBased()) {
+                            console.error(`❌ Could not find or access Discord channel with ID: ${TARGET_CHANNEL_ID}`);
+                            continue;
+                        }
 
-                            console.log('Downloading reel media via yt-dlp...');
+                        const outputFilePath = path.join(__dirname, `temp_reel_${Date.now()}_${Math.random().toString(36).substring(2)}.mp4`);
+                        const cookiesPath = path.join(__dirname, 'cookies.txt');
+
+                        try {
+                            console.log('⏳ Downloading reel media via yt-dlp...');
                             await execPromise(`yt-dlp --cookies "${cookiesPath}" -o "${outputFilePath}" "${messageText}"`);
+
+                            if (!fs.existsSync(outputFilePath)) {
+                                throw new Error('Download completed but file is missing.');
+                            }
 
                             const stats = fs.statSync(outputFilePath);
                             const fileSizeInMB = stats.size / (1024 * 1024);
 
                             if (fileSizeInMB > 25) {
-                                await channel.send(`**New Instagram Reel (Too large to upload directly):**\n${messageText}`);
-                                console.log('Reel file too large for Discord, sent link instead.');
+                                await channel.send(` **New Instagram Reel from @${senderName} (Too large to upload directly):**\n${messageText}`);
+                                console.log('Reel file too large for Discord (>25MB), sent link instead.');
                             } else {
                                 const attachment = new AttachmentBuilder(outputFilePath, { name: 'reel.mp4' });
                                 await channel.send({
-                                    content: `📥 **New Instagram Reel from @${senderName}:**`,
+                                    content: `**New Instagram Reel from @${senderName}:**`,
                                     files: [attachment]
                                 });
-                                console.log(`Uploaded reel video file to Discord channel ${TARGET_CHANNEL_ID}`);
+                                console.log(`Uploaded reel video file to Discord channel.`);
                             }
-
+                        } catch (downloadError) {
+                            console.error('Failed to download or process reel:', downloadError.message);
+                            // Fallback so the link isn't lost if download/upload fails
+                            await channel.send(` **New Instagram Reel from @${senderName} (Download failed, fallback link):**\n${messageText}`);
+                        } finally {
+                            // Guaranteed cleanup so temporary files never leak or lock up the disk
                             if (fs.existsSync(outputFilePath)) {
-                                fs.unlinkSync(outputFilePath);
+                                try {
+                                    fs.unlinkSync(outputFilePath);
+                                } catch (cleanupError) {
+                                    console.error('Failed to delete temp file:', cleanupError.message);
+                                }
                             }
-                        } else {
-                            console.error(`Could not find or access Discord channel with ID: ${TARGET_CHANNEL_ID}`);
                         }
                     }
                 }
             }
             return res.status(200).send('EVENT_RECEIVED');
         } catch (error) {
-            console.error(' Webhook pipeline processing error:', error.message);
+            console.error('❌ Webhook pipeline processing error:', error.message);
             return res.sendStatus(500);
         }
     }
