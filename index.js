@@ -45,10 +45,6 @@ app.post('/webhook', async (req, res) => {
                 const messagingEvent = entry.messaging?.[0];
 
                 if (messagingEvent) {
-                    if (messagingEvent.message?.is_echo) {
-                        continue;
-                    }
-
                     const message = messagingEvent.message;
                     const senderId = messagingEvent.sender?.id || 'Unknown';
 
@@ -106,7 +102,7 @@ app.post('/webhook', async (req, res) => {
                             } else {
                                 const attachment = new AttachmentBuilder(outputFilePath, { name: 'reel.mp4' });
                                 await channel.send({
-                                    content: `**New Instagram Reel from @${senderName}:**`,
+                                    content: `**New Instagram Reel from @${senderName}:** \n${reelUrl}`,
                                     files: [attachment]
                                 });
                                 console.log(`Uploaded reel video file to Discord channel.`);
