@@ -35,19 +35,27 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
+    console.log(JSON.stringify(req.body, null, 2));
     if (body.object === 'instagram') {
         try {
             for (let entry of body.entry) {
                 const messagingEvent = entry.messaging?.[0];
-
+		
                 if (messagingEvent && messagingEvent.message) {
                     const messageText = messagingEvent.message.text || '';
-
+		console.log(messageText.includes('instagram.com/reel/'))
                     // Route if message matches an Instagram Reel URL
                     if (messageText.includes('instagram.com/reel/')) {
                         console.log(`🎯 Reel caught in DMs: ${messageText}`);
 
-                        // Direct access to your bot's cache since we are inside index.js
+                        // Find the target Discord channel and send the reel link
+                        const channel = await client.channels.fetch(TARGET_CHANNEL_ID).catch(() => null);
+                        if (channel && channel.isTextBased()) {
+                            await channel.send(`📥 **New Instagram Reel:**\n${messageText}`);
+                            console.log(`✅ Forwarded Reel to Discord channel ${TARGET_CHANNEL_ID}`);
+                        } else {
+                            console.error(`❌ Could not find or access Discord channel with ID: ${TARGET_CHANNEL_ID}`);
+                        }
                     }
                 }
             }
